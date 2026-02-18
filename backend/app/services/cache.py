@@ -30,9 +30,6 @@ async def get_revenue_summary(property_id: str, tenant_id: str, start_date: date
     # Calculate revenue
     result = await calculate_total_revenue(property_id, tenant_id, start_date, end_date)
     
-
-
-    
     from app.core.money import Money
     
     if 'total' in result and isinstance(result['total'], Decimal):

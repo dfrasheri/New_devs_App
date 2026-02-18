@@ -16,11 +16,10 @@ async def get_dashboard_summary(
     from datetime import datetime
     from dateutil.relativedelta import relativedelta
     
-    # Calculate start and end of current month using dateutil for robustness
-    # This handles leap years and month rollovers automatically and is more readable
     now = datetime.now()
     start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     end_date = start_date + relativedelta(months=1)
+    #added the dateutil for case od jan Rollover , without the if/else logic
     
     # Pass dates to service
     revenue_data = await get_revenue_summary(property_id, tenant_id, start_date, end_date)
