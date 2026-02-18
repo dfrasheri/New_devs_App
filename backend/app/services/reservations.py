@@ -30,7 +30,7 @@ async def calculate_monthly_revenue(property_id: str, month: int, year: int, db_
     # return result or Decimal('0')
     
     return Decimal('0') # Placeholder for now until DB connection is finalized
-    
+
 # If a guest books at 11:00 PM in New York on Jan 31st, it counts as Feb 1st
 # for a property in Tirana, Albania. We respect the property's local time.
 async def _get_property_timezone(session, property_id: str, tenant_id: str) -> str:
