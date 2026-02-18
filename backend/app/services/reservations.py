@@ -30,14 +30,27 @@ async def calculate_monthly_revenue(property_id: str, month: int, year: int, db_
     # return result or Decimal('0')
     
     return Decimal('0') # Placeholder for now until DB connection is finalized
+# If a guest books at 11:00 PM in New York on Jan 31st, it counts as Feb 1st
+# for a property in Tirana, Albania. We respect the property's local time.
+async def _get_property_timezone(session, property_id: str, tenant_id: str) -> str:
+    from sqlalchemy import text
+    try:
+        query = text("SELECT timezone FROM properties WHERE id = :property_id AND tenant_id = :tenant_id")
+        result = await session.execute(query, {"property_id": property_id, "tenant_id": tenant_id})
+        timezone_name = result.scalar()
+        return timezone_name or "UTC"
+    except Exception:
+        return "UTC"
 
-async def calculate_total_revenue(property_id: str, tenant_id: str) -> Dict[str, Any]:
+async def calculate_total_revenue(property_id: str, tenant_id: str, start_date: datetime = None, end_date: datetime = None) -> Dict[str, Any]:
     """
     Aggregates revenue from database.
     """
     try:
         # Import database pool
         from app.core.database_pool import DatabasePool
+        from pytz import timezone
+        import pytz
         
         # Initialize pool if needed
         db_pool = DatabasePool()
@@ -48,28 +61,53 @@ async def calculate_total_revenue(property_id: str, tenant_id: str) -> Dict[str,
                 # Use SQLAlchemy text for raw SQL
                 from sqlalchemy import text
                 
-                query = text("""
+                # Dynamic query construction
+                date_filter = ""
+                params = {
+                    "property_id": property_id, 
+                    "tenant_id": tenant_id
+                }
+                
+                if start_date and end_date:
+                    # Resolve property timezone to ensure correct month boundaries
+                    tz_name = await _get_property_timezone(session, property_id, tenant_id)
+                    local_tz = timezone(tz_name)
+                    utc_tz = pytz.UTC
+                    
+                    # Convert input dates (assumed to be naive/server time or UTC) to property's local time
+                    # then back to UTC to ensure we query the correct absolute time range
+                    if start_date.tzinfo is None:
+                        start_date = start_date.replace(tzinfo=utc_tz)
+                    if end_date.tzinfo is None:
+                        end_date = end_date.replace(tzinfo=utc_tz)
+                        
+                    # Adjust query parameters
+                    params["start_date"] = start_date
+                    params["end_date"] = end_date
+                    
+                    date_filter = "AND check_in_date >= :start_date AND check_in_date < :end_date"
+                
+                query = text(f"""
                     SELECT 
                         property_id,
                         SUM(total_amount) as total_revenue,
                         COUNT(*) as reservation_count
                     FROM reservations 
                     WHERE property_id = :property_id AND tenant_id = :tenant_id
+                    {date_filter}
                     GROUP BY property_id
                 """)
                 
-                result = await session.execute(query, {
-                    "property_id": property_id, 
-                    "tenant_id": tenant_id
-                })
+                result = await session.execute(query, params)
                 row = result.fetchone()
                 
                 if row:
-                    total_revenue = Decimal(str(row.total_revenue))
+                    from app.core.money import Money
+                    total_revenue = Money.quantize(row.total_revenue)#quantize the total revenue, I was thinking of a more robust currency handling...for the future edge case testing 
                     return {
                         "property_id": property_id,
                         "tenant_id": tenant_id,
-                        "total": str(total_revenue),
+                        "total": total_revenue, 
                         "currency": "USD", 
                         "count": row.reservation_count
                     }
@@ -78,7 +116,7 @@ async def calculate_total_revenue(property_id: str, tenant_id: str) -> Dict[str,
                     return {
                         "property_id": property_id,
                         "tenant_id": tenant_id,
-                        "total": "0.00",
+                        "total": Decimal('0.00'),
                         "currency": "USD",
                         "count": 0
                     }
@@ -89,7 +127,6 @@ async def calculate_total_revenue(property_id: str, tenant_id: str) -> Dict[str,
         print(f"Database error for {property_id} (tenant: {tenant_id}): {e}")
         
         # Create property-specific mock data for testing when DB is unavailable
-        # This ensures each property shows different figures
         mock_data = {
             'prop-001': {'total': '1000.00', 'count': 3},
             'prop-002': {'total': '4975.50', 'count': 4}, 
@@ -103,7 +140,7 @@ async def calculate_total_revenue(property_id: str, tenant_id: str) -> Dict[str,
         return {
             "property_id": property_id,
             "tenant_id": tenant_id, 
-            "total": mock_property_data['total'],
+            "total": Decimal(mock_property_data['total']),
             "currency": "USD",
             "count": mock_property_data['count']
         }
